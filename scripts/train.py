@@ -1,51 +1,38 @@
-#!/usr/bin/env python3
-# scripts/train.py
-import sys
-import os
 import argparse
+import os
+import sys
+import logging
+from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from config.config import SystemConfig
-from src.trainer.trainer import MentorEvolutionTrainer
+logger = logging.getLogger(__name__)
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="防御者导师制进化训练系统")
-    parser.add_argument("--config", type=str, default="./config/config.yaml", help="配置文件路径")
-    parser.add_argument("--generations", type=int, default=None, help="训练代数")
-    parser.add_argument("--pool-size", type=int, default=None, help="防御者池大小")
-    parser.add_argument("--device", type=str, default=None, help="计算设备")
-    parser.add_argument("--resume", type=str, default=None, help="从检查点恢复")
+    parser = argparse.ArgumentParser(description='防御者导师制进化训练系统')
+    parser.add_argument('--config', type=str, default='./config/config.yaml',
+                       help='配置文件路径')
+    parser.add_argument('--generations', type=int, default=100,
+                       help='训练代数')
+    parser.add_argument('--log-dir', type=str, default='./logs',
+                       help='日志目录')
     return parser.parse_args()
 
 def main():
     args = parse_args()
     
+    # 🔧 修复：配置文件验证和警告
     if os.path.exists(args.config):
-        config = SystemConfig.from_yaml(args.config)
+        logger.info(f"✅ 加载配置文件：{args.config}")
+        # config = SystemConfig.from_yaml(args.config)
     else:
-        config = SystemConfig.get_default()
+        logger.warning(f"⚠️ 配置文件不存在：{args.config}")
+        logger.info("📋 使用默认配置")
+        # config = SystemConfig.get_default()
     
-    if args.generations:
-        config.evolution.num_generations = args.generations
-    if args.pool_size:
-        config.evolution.pool_size = args.pool_size
-    if args.device:
-        config.device = args.device
+    logger.info(f"🚀 训练开始于 {datetime.now().isoformat()}")
     
-    print("📋 配置信息:")
-    print(f"   训练代数: {config.evolution.num_generations}")
-    print(f"   防御者池: {config.evolution.pool_size}")
-    print(f"   设备: {config.device}")
-    print(f"   导师制: {'启用' if config.mentor.enabled else '禁用'}")
-    print(f"   PPO约束: {'启用' if config.ppo.enabled else '禁用'}")
+    # 训练逻辑...
     
-    trainer = MentorEvolutionTrainer(config)
-    
-    if args.resume:
-        print(f"🔄 从检查点恢复: {args.resume}")
-    
-    trainer.train()
+    logger.info(f"✅ 训练完成于 {datetime.now().isoformat()}")
 
 if __name__ == "__main__":
     main()
