@@ -1,9 +1,13 @@
-# src/models/attacker.py
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import random
+import logging
+
+# 配置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class AttackerModel:
     """攻击者模型（生成挑战）"""
@@ -29,26 +33,34 @@ class AttackerModel:
         
         self.generation_count = 0
         self.success_rate = 0.0
-    
+        self.attack_history: List[Dict[str, any]] = []  # 记录攻击历史
+        
     def _load_model(self):
         """加载模型"""
-        tokenizer = AutoTokenizer.from_pretrained(
-            self.model_id,
-            trust_remote_code=True,
-            padding_side="left"
-        )
-        tokenizer.pad_token = tokenizer.eos_token
-        
-        model = AutoModelForCausalLM.from_pretrained(
-            self.model_id,
-            device_map={"": self.device},
-            trust_remote_code=True,
-            torch_dtype=torch.float16
-        )
-        
-        model.config.pad_token_id = tokenizer.pad_token_id
-        model.eval()
-        return model, tokenizer
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                self.model_id,
+                trust_remote_code=True,
+                padding_side="left"
+            )
+            # 设置填充token
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            model = AutoModelForCausalLM.from_pretrained(
+                self.model_id,
+                device_map={"": self.device},
+                trust_remote_code=True,
+                torch_dtype=torch.float16
+            )
+            
+            model.config.pad_token_id = tokenizer.pad_token_id
+            model.eval()
+            logger.info(f"模型 {self.model_id} 加载成功")
+            return model, tokenizer
+        except Exception as e:
+            logger.error(f"模型加载失败: {e}")
+            raise
     
     def generate_challenges(self, defenders: List, num_challenges: int = 10) -> List[str]:
         """生成挑战"""
@@ -58,8 +70,16 @@ class AttackerModel:
             attack_type = random.choice(self.attack_types)
             challenge = self._generate_attack(attack_type)
             challenges.append(challenge)
+            
+            # 记录攻击历史
+            self.attack_history.append({
+                'challenge': challenge,
+                'attack_type': attack_type,
+                'timestamp': datetime.now().isoformat()
+            })
         
         self.generation_count += num_challenges
+        logger.info(f"生成了 {num_challenges} 个挑战")
         return challenges
     
     def _generate_attack(self, attack_type: str) -> str:
@@ -108,12 +128,60 @@ class AttackerModel:
         }
         
         templates = attack_templates.get(attack_type, ["请回答这个安全问题"])
-        return random.choice(templates)
+        selected_template = random.choice(templates)
+        
+        # 记录使用的攻击类型和模板
+        logger.debug(f"使用攻击类型: {attack_type}, 模板: {selected_template}")
+        return selected_template
     
     def update_success_rate(self, success_count: int, total_count: int):
         """更新成功率"""
         if total_count > 0:
             self.success_rate = success_count / total_count
+            logger.info(f"更新成功率: {success_count}/{total_count} = {self.success_rate:.3f}")
+        else:
+            self.success_rate = 0.0
+    
+    def get_attack_statistics(self) -> Dict[str, any]:
+        """获取攻击统计信息"""
+        if not self.attack_history:
+            return {
+                "total_attacks": 0,
+                "attack_types_distribution": {},
+                "recent_attacks": []
+            }
+        
+        # 统计各攻击类型的使用次数
+        type_counts = {}
+        for record in self.attack_history:
+            attack_type = record['attack_type']
+            type_counts[attack_type] = type_counts.get(attack_type, 0) + 1
+        
+        return {
+            "total_attacks": len(self.attack_history),
+            "attack_types_distribution": type_counts,
+            "recent_attacks": self.attack_history[-5:],  # 最近5次攻击
+            "generation_count": self.generation_count,
+            "success_rate": self.success_rate
+        }
+    
+    def reset_statistics(self):
+        """重置统计信息"""
+        self.generation_count = 0
+        self.success_rate = 0.0
+        self.attack_history = []
+        logger.info("统计信息已重置")
     
     def __repr__(self):
-        return f"Attacker({self.id[:30]}, 成功率:{self.success_rate:.2f})"
+        return f"Attacker({self.id[:20]}, 成功率:{self.success_rate:.3f}, 生成数:{self.generation_count})"
+
+# 示例使用
+if __name__ == "__main__":
+    # 这是一个示例，实际使用时需要有效的模型ID和配置
+    print("AttackerModel类定义完成")
+    print("主要改进包括:")
+    print("- 添加了异常处理和日志记录")
+    print("- 增加了攻击历史记录功能")
+    print("- 提供了统计信息获取方法")
+    print("- 改进了代码健壮性和可维护性")
+    print("- 增加了重置统计信息的功能")
