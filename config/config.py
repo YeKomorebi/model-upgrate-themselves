@@ -7,10 +7,10 @@ import os
 
 class ModelSize(Enum):
     """模型尺寸枚举"""
-    TINY = "Qwen/Qwen3-0.5B"
-    SMALL = "Qwen/Qwen3-1.5B"
-    MEDIUM = "Qwen/Qwen3-3B"
-    LARGE = "Qwen/Qwen3-7B"
+    TINY = "Qwen/Qwen2.5-0.5B"
+    SMALL = "Qwen/Qwen2.5-1.5B"
+    MEDIUM = "Qwen/Qwen2.5-3B"
+    LARGE = "Qwen/Qwen2.5-7B"
 
 @dataclass
 class ModelConfig:
