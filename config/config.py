@@ -18,7 +18,7 @@ class ModelConfig:
     defender_model: str = ModelSize.SMALL.value
     attacker_model: str = ModelSize.SMALL.value
     judge_model: str = ModelSize.MEDIUM.value
-    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_model: str = "all-MiniLM-L6-v2"
     use_qlora: bool = True
     lora_r: int = 16
     lora_alpha: int = 32
