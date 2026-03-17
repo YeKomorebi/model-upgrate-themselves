@@ -1,148 +1,233 @@
-# src/evolution/evolutionary_ops.py
-from typing import List, Dict
-import random
-import copy
-import torch
+from typing import Dict, List, Any, Optional
+import logging
 from datetime import datetime
 
-class EvolutionaryOperations:
-    """进化操作"""
+logger = logging.getLogger(__name__)
+
+class MentorEvaluator:
+    """
+    导师评估器 - 已修复版本
+    
+    🔧 修复：除零风险、硬编码魔法数字
+    """
     
     def __init__(self, config):
-        self.config = config.evolution
-        self.evolution_history: List[Dict] = []
-    
-    def evolve(self, defenders: List, generation: int) -> List:
-        """执行进化操作"""
+        self.config = config.mentor if hasattr(config, 'mentor') else {}
         
-        # 1. 评估适应度
-        fitness_scores = [d.avg_reward for d in defenders]
-        
-        # 2. 选择精英
-        elite_indices = self._select_elite(defenders, fitness_scores)
-        elites = [defenders[i] for i in elite_indices]
-        
-        # 3. 杂交
-        offspring = self._crossover(elites)
-        
-        # 4. 突变
-        offspring = self._mutate(offspring)
-        
-        # 5. 选择下一代
-        next_generation = self._select_next_generation(
-            defenders, offspring, fitness_scores
-        )
-        
-        # 记录进化历史
-        self.evolution_history.append({
-            "generation": generation,
-            "num_elites": len(elites),
-            "num_offspring": len(offspring),
-            "avg_fitness": sum(fitness_scores) / len(fitness_scores),
-            "best_fitness": max(fitness_scores),
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        return next_generation
-    
-    def _select_elite(self, defenders: List, fitness_scores: List) -> List[int]:
-        """选择精英"""
-        sorted_indices = sorted(
-            range(len(fitness_scores)),
-            key=lambda i: fitness_scores[i],
-            reverse=True
-        )
-        return sorted_indices[:self.config.elite_count]
-    
-    def _crossover(self, elites: List) -> List:
-        """杂交操作"""
-        offspring = []
-        
-        if len(elites) < 2:
-            return offspring
-        
-        num_offspring = self.config.pool_size - self.config.elite_count
-        
-        for _ in range(num_offspring):
-            if random.random() < self.config.crossover_rate:
-                parent1, parent2 = random.sample(elites, 2)
-                child = self._create_offspring(parent1, parent2)
-                offspring.append(child)
-            else:
-                offspring.append(copy.deepcopy(random.choice(elites)))
-        
-        return offspring
-    
-    def _create_offspring(self, parent1, parent2):
-        """创建子代"""
-        child = copy.deepcopy(parent1)
-        child.id = f"defender_offspring_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        child.generation_count = 0
-        child.reward_history = []
-        child.avg_reward = (parent1.avg_reward + parent2.avg_reward) / 2
-        
-        # 合并攻击类型表现
-        child.attack_type_performance = {}
-        all_types = set(parent1.attack_type_performance.keys()) | set(parent2.attack_type_performance.keys())
-        for attack_type in all_types:
-            score1 = parent1.attack_type_performance.get(attack_type, 0.5)
-            score2 = parent2.attack_type_performance.get(attack_type, 0.5)
-            child.attack_type_performance[attack_type] = (score1 + score2) / 2
-        
-        return child
-    
-    def _mutate(self, defenders: List) -> List:
-        """突变操作"""
-        for defender in defenders:
-            if random.random() < self.config.mutation_rate:
-                self._apply_mutation(defender)
-        
-        return defenders
-    
-    def _apply_mutation(self, defender):
-        """应用突变"""
-        # 轻微调整奖励历史
-        if defender.reward_history:
-            mutation_factor = random.gauss(1.0, 0.1)
-            defender.reward_history[-1] *= mutation_factor
-            defender.avg_reward = sum(defender.reward_history[-20:]) / min(20, len(defender.reward_history))
-        
-        # 随机调整攻击类型表现
-        for attack_type in defender.attack_type_performance:
-            if random.random() < 0.3:
-                defender.attack_type_performance[attack_type] *= random.gauss(1.0, 0.15)
-                defender.attack_type_performance[attack_type] = max(0.0, min(1.0, defender.attack_type_performance[attack_type]))
-    
-    def _select_next_generation(self, current: List, offspring: List, 
-                               fitness_scores: List) -> List:
-        """选择下一代"""
-        all_defenders = current + offspring
-        all_fitness = fitness_scores + [o.avg_reward for o in offspring]
-        
-        sorted_indices = sorted(
-            range(len(all_fitness)),
-            key=lambda i: all_fitness[i],
-            reverse=True
-        )
-        
-        next_generation = [all_defenders[i] for i in sorted_indices[:self.config.pool_size]]
-        
-        # 重置更新预算
-        for defender in next_generation:
-            defender.reset_update_budget()
-        
-        return next_generation
-    
-    def get_evolution_stats(self) -> Dict:
-        """获取进化统计"""
-        if not self.evolution_history:
-            return {"total_generations": 0}
-        
-        recent = self.evolution_history[-100:]
-        
-        return {
-            "total_generations": len(self.evolution_history),
-            "avg_fitness": sum(e["avg_fitness"] for e in recent) / len(recent),
-            "best_fitness": max(e["best_fitness"] for e in self.evolution_history),
-            "fitness_trend": recent[-1]["avg_fitness"] - recent[0]["avg_fitness"] if len(recent) > 1 else 0
+        # 🔧 修复：从配置读取权重，避免硬编码
+        mentor_config = self.config
+        self.evaluation_metrics = {
+            "mentee_improvement_rate": getattr(mentor_config, 'weight_improvement', 0.4),
+            "mentee_retention": getattr(mentor_config, 'weight_retention', 0.2),
+            "knowledge_transfer_efficiency": getattr(mentor_config, 'weight_transfer', 0.25),
+            "mentee_satisfaction": getattr(mentor_config, 'weight_satisfaction', 0.15),
         }
+        
+        # 🔧 修复：验证权重总和
+        total_weight = sum(self.evaluation_metrics.values())
+        if abs(total_weight - 1.0) > 0.01:
+            logger.warning(f"评估权重总和不为 1: {total_weight}，正在归一化...")
+            for key in self.evaluation_metrics:
+                self.evaluation_metrics[key] /= total_weight
+        
+        # 🔧 修复：除零保护常数
+        self.epsilon = getattr(mentor_config, 'epsilon', 1e-6)
+        
+        self.evaluation_history: List[Dict] = []
+    
+    def evaluate_mentor(self, mentor, mentees: List, 
+                       before_rewards: Dict[str, float],
+                       after_rewards: Dict[str, float]) -> Dict[str, Any]:
+        """
+        评估导师表现
+        
+        🔧 修复：添加输入验证和除零保护
+        """
+        try:
+            # 🔧 修复：输入验证
+            if not mentees:
+                logger.warning("没有学生，无法评估导师")
+                return self._create_empty_evaluation(mentor)
+            
+            if not before_rewards or not after_rewards:
+                logger.warning("奖励数据不完整")
+                return self._create_empty_evaluation(mentor)
+            
+            # 计算各项指标
+            improvement_rate = self._calculate_improvement_rate(
+                mentees, before_rewards, after_rewards
+            )
+            retention_rate = self._calculate_retention_rate(mentees)
+            transfer_efficiency = self._calculate_transfer_efficiency(
+                mentor, mentees, before_rewards, after_rewards
+            )
+            satisfaction = self._calculate_satisfaction(mentees)
+            
+            # 计算加权总分
+            overall_score = (
+                improvement_rate * self.evaluation_metrics["mentee_improvement_rate"] +
+                retention_rate * self.evaluation_metrics["mentee_retention"] +
+                transfer_efficiency * self.evaluation_metrics["knowledge_transfer_efficiency"] +
+                satisfaction * self.evaluation_metrics["mentee_satisfaction"]
+            )
+            
+            evaluation = {
+                'mentor_id': mentor.id if hasattr(mentor, 'id') else 'unknown',
+                'timestamp': datetime.now().isoformat(),
+                'scores': {
+                    'improvement_rate': improvement_rate,
+                    'retention_rate': retention_rate,
+                    'transfer_efficiency': transfer_efficiency,
+                    'satisfaction': satisfaction,
+                    'overall': overall_score
+                },
+                'metrics_weights': self.evaluation_metrics.copy(),
+                'mentee_count': len(mentees),
+                'qualified': overall_score >= getattr(self.config, 'min_score', 0.6)
+            }
+            
+            self.evaluation_history.append(evaluation)
+            logger.info(f"导师评估完成：{mentor.id if hasattr(mentor, 'id') else 'unknown'} - 总分：{overall_score:.3f}")
+            
+            return evaluation
+            
+        except Exception as e:
+            logger.error(f"导师评估失败：{e}")
+            return self._create_empty_evaluation(mentor)
+    
+    def _calculate_improvement_rate(self, mentees: List, 
+                                   before_rewards: Dict[str, float],
+                                   after_rewards: Dict[str, float]) -> float:
+        """
+        计算学生进步率
+        
+        🔧 修复：安全的除零保护
+        """
+        improvements = []
+        
+        for mentee in mentees:
+            mentee_id = mentee.id if hasattr(mentee, 'id') else str(mentee)
+            before = before_rewards.get(mentee_id, 0.0)
+            after = after_rewards.get(mentee_id, 0.0)
+            
+            # 🔧 修复：安全的除法
+            divisor = abs(before) + self.epsilon
+            if divisor < self.epsilon:
+                improvement = 0.0 if after <= 0 else 1.0
+            else:
+                improvement = (after - before) / divisor
+            
+            # 限制范围 [-1, 2]
+            improvement = max(-1.0, min(2.0, improvement))
+            improvements.append(improvement)
+        
+        if not improvements:
+            return 0.0
+        
+        # 归一化到 [0, 1]
+        avg_improvement = sum(improvements) / len(improvements)
+        return (avg_improvement + 1) / 3  # [-1,2] -> [0,1]
+    
+    def _calculate_retention_rate(self, mentees: List) -> float:
+        """计算学生保留率"""
+        if not mentees:
+            return 0.0
+        
+        # 假设活跃学生是有最近交互的
+        active_count = sum(
+            1 for m in mentees 
+            if hasattr(m, 'last_interaction') and m.last_interaction
+        )
+        
+        return active_count / len(mentees)
+    
+    def _calculate_transfer_efficiency(self, mentor, mentees: List,
+                                      before_rewards: Dict[str, float],
+                                      after_rewards: Dict[str, float]) -> float:
+        """计算知识传递效率"""
+        if not mentees:
+            return 0.0
+        
+        efficiency_scores = []
+        
+        for mentee in mentees:
+            mentee_id = mentee.id if hasattr(mentee, 'id') else str(mentee)
+            before = before_rewards.get(mentee_id, 0.0)
+            after = after_rewards.get(mentee_id, 0.0)
+            
+            # 计算能力差距缩小程度
+            mentor_reward = getattr(mentor, 'avg_reward', 0.5)
+            
+            # 🔧 修复：安全的除法
+            gap_before = max(0, mentor_reward - before)
+            gap_after = max(0, mentor_reward - after)
+            
+            if gap_before < self.epsilon:
+                efficiency = 1.0 if gap_after <= 0 else 0.5
+            else:
+                efficiency = 1.0 - (gap_after / gap_before)
+            
+            efficiency = max(0.0, min(1.0, efficiency))
+            efficiency_scores.append(efficiency)
+        
+        return sum(efficiency_scores) / len(efficiency_scores)
+    
+    def _calculate_satisfaction(self, mentees: List) -> float:
+        """计算学生满意度"""
+        if not mentees:
+            return 0.0
+        
+        satisfaction_scores = []
+        
+        for mentee in mentees:
+            # 从学生属性获取满意度
+            if hasattr(mentee, 'satisfaction_score'):
+                score = mentee.satisfaction_score
+            elif hasattr(mentee, 'avg_reward'):
+                score = mentee.avg_reward
+            else:
+                score = 0.5  # 默认值
+            
+            satisfaction_scores.append(max(0.0, min(1.0, score)))
+        
+        return sum(satisfaction_scores) / len(satisfaction_scores)
+    
+    def _create_empty_evaluation(self, mentor) -> Dict[str, Any]:
+        """创建空评估结果"""
+        return {
+            'mentor_id': mentor.id if hasattr(mentor, 'id') else 'unknown',
+            'timestamp': datetime.now().isoformat(),
+            'scores': {
+                'improvement_rate': 0.0,
+                'retention_rate': 0.0,
+                'transfer_efficiency': 0.0,
+                'satisfaction': 0.0,
+                'overall': 0.0
+            },
+            'metrics_weights': self.evaluation_metrics.copy(),
+            'mentee_count': 0,
+            'qualified': False,
+            'error': '评估失败或无数据'
+        }
+    
+    def get_evaluation_history(self) -> List[Dict]:
+        """获取评估历史"""
+        return self.evaluation_history
+    
+    def get_top_mentors(self, n: int = 5) -> List[Dict]:
+        """获取评分最高的导师"""
+        if not self.evaluation_history:
+            return []
+        
+        sorted_evals = sorted(
+            self.evaluation_history,
+            key=lambda x: x['scores']['overall'],
+            reverse=True
+        )
+        
+        return sorted_evals[:n]
+    
+    def reset(self):
+        """重置评估历史"""
+        self.evaluation_history = []
+        logger.info("评估历史已重置")
