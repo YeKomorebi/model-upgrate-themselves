@@ -1,8 +1,8 @@
 # config/config.yaml - 完整配置示例
 
 model:
-  defender_model: "Qwen/Qwen3-1.5B"
-  attacker_model: "Qwen/Qwen3-1.5B"
+  defender_model: "Qwen/Qwen3-1.7B"
+  attacker_model: "Qwen/Qwen3-1.7B"
   judge_model: "Qwen/Qwen3-3B"
   embedding_model: "paraphrase-multilingual-MiniLM-L12-v2"
   use_qlora: true
