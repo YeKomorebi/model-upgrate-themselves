@@ -1,91 +1,63 @@
-#!/usr/bin/env python3
-# scripts/monitor.py
-import sys
-import os
-import json
 import argparse
+import json
+import os
+import logging
+from typing import Dict, Any
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="训练监控工具")
-    parser.add_argument("--log-dir", type=str, default="./logs", help="日志目录")
-    parser.add_argument("--mentors", action="store_true", help="查看导师统计")
-    parser.add_argument("--ppo", action="store_true", help="查看PPO统计")
-    parser.add_argument("--evolution", action="store_true", help="查看进化统计")
-    parser.add_argument("--live", action="store_true", help="实时监控")
-    return parser.parse_args()
-
-def load_training_log(log_dir: str):
-    log_path = os.path.join(log_dir, "training_log.json")
+def load_training_log(log_dir: str) -> List[Dict]:
+    """加载训练日志"""
+    log_path = os.path.join(log_dir, 'training_log.json')
+    
     if not os.path.exists(log_path):
+        logger.warning(f"日志文件不存在：{log_path}")
         return []
     
-    with open(log_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"加载日志失败：{e}")
+        return []
 
-def show_summary(logs: list):
+def show_summary(logs: List[Dict]):
+    """显示训练摘要"""
     if not logs:
-        print("❌ 暂无训练日志")
+        print("无日志数据")
         return
     
-    latest = logs[-1]
-    print(f"\n{'='*60}")
-    print("📊 训练摘要")
-    print(f"{'='*60}")
-    print(f"当前代数: {latest.get('generation', 'N/A')}")
-    print(f"平均奖励: {latest.get('avg_reward', 0):.3f}")
-    print(f"最佳奖励: {latest.get('best_reward', 0):.3f}")
-    print(f"导师数量: {latest.get('num_mentors', 0)}")
-    print(f"学生数量: {latest.get('num_mentees', 0)}")
+    print("=" * 60)
+    print("训练摘要")
+    print("=" * 60)
+    print(f"总代数：{len(logs)}")
+    print(f"开始时间：{logs[0].get('timestamp', 'N/A')}")
+    print(f"结束时间：{logs[-1].get('timestamp', 'N/A')}")
     
-    if 'ppo_stats' in latest:
-        ppo = latest['ppo_stats']
-        print(f"KL系数: {ppo.get('kl_coefficient', 0):.4f}")
-
-def show_mentor_stats(logs: list):
-    print(f"\n{'='*60}")
-    print("🎓 导师统计")
-    print(f"{'='*60}")
+    if logs and 'reward' in logs[-1]:
+        rewards = [log.get('reward', 0) for log in logs]
+        print(f"平均奖励：{sum(rewards)/len(rewards):.4f}")
+        print(f"最终奖励：{rewards[-1]:.4f}")
     
-    if not logs:
-        print("暂无数据")
-        return
-    
-    for log in logs[-10:]:
-        print(f"代{log.get('generation', '?')}: 导师={log.get('num_mentors', 0)}, 学生={log.get('num_mentees', 0)}")
-
-def show_ppo_stats(logs: list):
-    print(f"\n{'='*60}")
-    print("🔒 PPO约束统计")
-    print(f"{'='*60}")
-    
-    ppo_logs = [l for l in logs if 'ppo_stats' in l]
-    
-    if not ppo_logs:
-        print("暂无PPO数据")
-        return
-    
-    for log in ppo_logs[-10:]:
-        ppo = log['ppo_stats']
-        print(f"代{log.get('generation', '?')}: KL系数={ppo.get('kl_coefficient', 0):.4f}")
+    print("=" * 60)
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser(description='训练监控工具')
+    parser.add_argument('--log-dir', type=str, default='./logs',
+                       help='日志目录')
+    parser.add_argument('--live', action='store_true',
+                       help='实时监控')
+    parser.add_argument('--mentors', action='store_true',
+                       help='显示导师统计')
+    parser.add_argument('--ppo', action='store_true',
+                       help='显示 PPO 统计')
+    
+    args = parser.parse_args()
     
     logs = load_training_log(args.log_dir)
-    
-    if args.mentors:
-        show_mentor_stats(logs)
-    elif args.ppo:
-        show_ppo_stats(logs)
-    elif args.evolution:
-        show_summary(logs)
-    else:
-        show_summary(logs)
-        show_mentor_stats(logs)
-        show_ppo_stats(logs)
+    show_summary(logs)
 
 if __name__ == "__main__":
     main()
