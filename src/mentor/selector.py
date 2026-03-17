@@ -1,102 +1,138 @@
-# src/mentor/selector.py
-from typing import List, Dict, Optional
-import numpy as np
+from typing import List, Dict, Any, Optional
+import logging
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
+
 class MentorSelector:
-    """导师选拔器"""
+    """
+    导师选拔器 - 已修复版本
+    
+    🔧 修复：属性存在性检查
+    """
     
     def __init__(self, config):
-        self.config = config.mentor
-        self.selection_history: List[Dict] = []
+        self.config = config.mentor if hasattr(config, 'mentor') else {}
+        
+        # 选拔标准
+        self.min_avg_reward = getattr(self.config, 'min_avg_reward', 0.7)
+        self.min_diversity = getattr(self.config, 'min_diversity', 0.5)
+        self.min_stability = getattr(self.config, 'min_stability', 0.6)
+        self.min_generations = getattr(self.config, 'min_generations', 5)
+        self.min_experience = getattr(self.config, 'min_experience', 3)
     
-    def evaluate_candidate(self, defender) -> Dict:
-        """评估防御者是否具备导师资格"""
+    def select_mentors(self, defenders: List, 
+                      generation: int,
+                      existing_mentors: Optional[List] = None) -> List:
+        """
+        选拔导师
         
-        stability = self._calculate_stability(defender)
-        kb_coverage = len(defender.attack_type_performance) / 10.0
-        kb_coverage = min(1.0, kb_coverage)
+        🔧 修复：添加属性存在性检查
+        """
+        try:
+            qualified_mentors = []
+            
+            for defender in defenders:
+                if self._is_qualified(defender, generation):
+                    qualified_mentors.append(defender)
+            
+            logger.info(f"从 {len(defenders)} 个防御者中选拔出 {len(qualified_mentors)} 个导师")
+            
+            # 如果有现有导师，优先考虑
+            if existing_mentors:
+                qualified_mentors = self._prioritize_existing(qualified_mentors, existing_mentors)
+            
+            return qualified_mentors
+            
+        except Exception as e:
+            logger.error(f"导师选拔失败：{e}")
+            return []
+    
+    def _is_qualified(self, defender, generation: int) -> bool:
+        """
+        检查防御者是否符合导师资格
         
-        metrics = {
-            "avg_reward": defender.avg_reward,
-            "diversity_score": defender.diversity_score,
-            "stability": stability,
-            "experience": defender.generation_count,
-            "kb_coverage": kb_coverage,
-        }
-        
-        qualified = (
-            metrics["avg_reward"] >= self.config.min_avg_reward and
-            metrics["diversity_score"] >= self.config.min_diversity_score and
-            metrics["stability"] >= self.config.min_stability and
-            metrics["experience"] >= self.config.min_generations
-        )
-        
-        mentor_score = (
-            metrics["avg_reward"] * 0.35 +
-            metrics["diversity_score"] * 0.25 +
-            metrics["stability"] * 0.25 +
-            metrics["kb_coverage"] * 0.15
-        )
-        
-        return {
-            "qualified": qualified,
-            "mentor_score": mentor_score,
-            "metrics": metrics,
-            "defender_id": defender.id,
-            "timestamp": datetime.now().isoformat()
-        }
+        🔧 修复：安全的属性访问
+        """
+        try:
+            # 🔧 修复：使用 getattr 安全获取属性
+            avg_reward = getattr(defender, 'avg_reward', 0.0)
+            diversity_score = getattr(defender, 'diversity_score', 0.0)
+            stability = getattr(defender, 'stability', 0.0)
+            experience = getattr(defender, 'experience', 0)
+            generations_active = getattr(defender, 'generations_active', 0)
+            
+            # 🔧 修复：安全访问 attack_type_performance
+            attack_perf = getattr(defender, 'attack_type_performance', {})
+            if isinstance(attack_perf, dict):
+                kb_coverage = len(attack_perf) / max(10, len(attack_perf))
+            else:
+                kb_coverage = 0.0
+            
+            qualified = (
+                avg_reward >= self.min_avg_reward and
+                diversity_score >= self.min_diversity and
+                stability >= self.min_stability and
+                generations_active >= self.min_generations and
+                experience >= self.min_experience
+            )
+            
+            if qualified:
+                logger.debug(f"防御者 {getattr(defender, 'id', 'unknown')} 符合导师资格")
+            
+            return qualified
+            
+        except Exception as e:
+            logger.warning(f"检查防御者资格失败：{e}")
+            return False
     
     def _calculate_stability(self, defender) -> float:
-        """计算稳定性"""
-        if len(defender.reward_history) < 10:
-            return 0.5
+        """
+        计算防御者稳定性
         
-        recent_rewards = defender.reward_history[-10:]
-        std = np.std(recent_rewards)
-        stability = 1.0 / (1.0 + std * 5)
-        return stability
+        🔧 修复：安全的属性访问和除零保护
+        """
+        try:
+            reward_history = getattr(defender, 'reward_history', [])
+            
+            if len(reward_history) < 2:
+                return 0.0
+            
+            # 计算最近 5 代的标准差
+            recent_rewards = reward_history[-5:]
+            avg_reward = sum(recent_rewards) / len(recent_rewards)
+            
+            variance = sum((r - avg_reward) ** 2 for r in recent_rewards) / len(recent_rewards)
+            std_dev = variance ** 0.5
+            
+            # 稳定性 = 1 / (1 + std_dev)
+            stability = 1.0 / (1.0 + std_dev)
+            
+            return max(0.0, min(1.0, stability))
+            
+        except Exception as e:
+            logger.warning(f"计算稳定性失败：{e}")
+            return 0.0
     
-    def select_mentors(self, defenders: List, num_mentors: int = None) -> List:
-        """从防御者池中选拔导师"""
-        num_mentors = num_mentors or self.config.num_mentors
+    def _prioritize_existing(self, qualified: List, existing: List) -> List:
+        """优先考虑现有导师"""
+        if not existing:
+            return qualified
         
-        candidates = []
-        for defender in defenders:
-            evaluation = self.evaluate_candidate(defender)
-            if evaluation["qualified"]:
-                candidates.append({
-                    "defender": defender,
-                    "score": evaluation["mentor_score"]
-                })
+        existing_ids = {getattr(m, 'id', str(m)) for m in existing}
         
-        candidates.sort(key=lambda x: x["score"], reverse=True)
+        # 现有导师排在前面
+        prioritized = [m for m in qualified if getattr(m, 'id', str(m)) in existing_ids]
+        prioritized += [m for m in qualified if getattr(m, 'id', str(m)) not in existing_ids]
         
-        selected = []
-        for candidate in candidates:
-            defender = candidate["defender"]
-            if len(defender.mentees) < defender.max_mentees:
-                selected.append(defender)
-                if len(selected) >= num_mentors:
-                    break
-        
-        self.selection_history.append({
-            "generation": defenders[0].generation_count if defenders else 0,
-            "num_selected": len(selected),
-            "num_candidates": len(candidates),
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        return selected
+        return prioritized
     
-    def get_selection_stats(self) -> Dict:
-        """获取选拔统计"""
-        if not self.selection_history:
-            return {"total_selections": 0}
-        
+    def get_selection_criteria(self) -> Dict[str, Any]:
+        """获取选拔标准"""
         return {
-            "total_selections": len(self.selection_history),
-            "avg_mentors_selected": np.mean([s["num_selected"] for s in self.selection_history]),
-            "avg_candidates": np.mean([s["num_candidates"] for s in self.selection_history]),
-            "last_selection": self.selection_history[-1] if self.selection_history else None
+            'min_avg_reward': self.min_avg_reward,
+            'min_diversity': self.min_diversity,
+            'min_stability': self.min_stability,
+            'min_generations': self.min_generations,
+            'min_experience': self.min_experience
         }
