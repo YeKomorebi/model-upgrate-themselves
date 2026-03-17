@@ -1,0 +1,68 @@
+# config/config.yaml - 完整配置示例
+
+model:
+  defender_model: "Qwen/Qwen3-1.5B"
+  attacker_model: "Qwen/Qwen3-1.5B"
+  judge_model: "Qwen/Qwen3-3B"
+  embedding_model: "paraphrase-multilingual-MiniLM-L12-v2"
+  use_qlora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.1
+  max_seq_len: 512
+
+mentor:
+  enabled: true
+  min_avg_reward: 0.75
+  min_diversity_score: 0.7
+  min_stability: 0.8
+  min_generations: 50
+  max_mentees_per_mentor: 3
+  num_mentors: 3
+  pairing_strategy: "best_match"
+  distillation_temperature: 2.0
+  distillation_alpha: 0.7
+  distillation_beta: 0.3
+  guidance_frequency: 5
+  evaluation_frequency: 20
+  mentor_selection_frequency: 50
+  use_ppo_constraint: true
+
+ppo:
+  enabled: true
+  ref_model_update_frequency: 100
+  ref_model_type: "ema"
+  kl_coefficient: 0.2
+  kl_target: 0.02
+  kl_clip_min: 0.001
+  kl_clip_max: 1.0
+  adaptive_kl: true
+  clip_epsilon: 0.2
+  clip_value: true
+  value_loss_coeff: 0.5
+  entropy_coeff: 0.01
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 4
+
+evolution:
+  pool_size: 5
+  elite_count: 2
+  mutation_rate: 0.1
+  crossover_rate: 0.3
+  batch_size: 2
+  num_generations: 500
+
+knowledge_base:
+  chroma_path: "./data/chroma_db"
+  max_documents: 10000
+  retrieval_k: 3
+  save_frequency: 10
+
+# 训练配置
+output_dir: "./output"
+log_dir: "./logs"
+checkpoint_dir: "./checkpoints"
+seed: 42
+device: "cuda"
+log_frequency: 1
+save_checkpoint_frequency: 50
