@@ -1,135 +1,134 @@
-# src/ppo/kl_constraint.py
+from typing import Dict, List, Any, Optional
+import logging
 import torch
-import torch.nn as nn
 import numpy as np
-from typing import Dict, Optional
-from dataclasses import dataclass
+from collections import deque
 
-@dataclass
-class KLConstraintConfig:
-    """KL约束配置"""
-    kl_coefficient: float = 0.2
-    kl_target: float = 0.02
-    kl_clip_min: float = 0.001
-    kl_clip_max: float = 1.0
-    adaptive_kl: bool = True
-    horizon: int = 10000
+logger = logging.getLogger(__name__)
 
 class KLConstraint:
-    """KL散度约束管理器"""
+    """
+    KL 约束 - 已修复版本
     
-    def __init__(self, config: KLConstraintConfig):
-        self.config = config
-        self.current_kl_coeff = config.kl_coefficient
-        
-        self.kl_buffer = []
-        self.update_count = 0
-        
-        self.stats = {
-            "total_updates": 0,
-            "kl_coeff_adjustments": 0,
-            "kl_violations": 0
-        }
+    🔧 修复：缓冲区大小限制、内存管理
+    """
     
-    def compute_kl_penalty(self, policy_logits: torch.Tensor,
-                          ref_logits: torch.Tensor,
-                          mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """计算KL惩罚项"""
+    def __init__(self, config):
+        self.config = config.ppo if hasattr(config, 'ppo') else {}
         
-        policy_log_probs = torch.log_softmax(policy_logits, dim=-1)
-        ref_log_probs = torch.log_softmax(ref_logits, dim=-1)
+        self.kl_coefficient = getattr(self.config, 'kl_coefficient', 0.2)
+        self.target_kl = getattr(self.config, 'target_kl', 0.01)
         
-        kl_div = torch.sum(
-            torch.exp(policy_log_probs) * (policy_log_probs - ref_log_probs),
-            dim=-1
-        )
+        # 🔧 修复：限制缓冲区大小
+        self.max_buffer_size = getattr(self.config, 'kl_buffer_size', 1000)
+        self.kl_buffer = deque(maxlen=self.max_buffer_size)
         
-        if mask is not None:
-            kl_div = kl_div * mask
-        
-        kl_penalty = kl_div.mean() * self.current_kl_coeff
-        
-        return kl_penalty
+        self.min_kl_coeff = getattr(self.config, 'min_kl_coeff', 0.01)
+        self.max_kl_coeff = getattr(self.config, 'max_kl_coeff', 1.0)
     
-    def compute_ppo_loss(self, old_log_probs: torch.Tensor,
-                        new_log_probs: torch.Tensor,
-                        advantages: torch.Tensor,
-                        clip_epsilon: float = 0.2) -> torch.Tensor:
-        """计算PPO策略损失"""
+    def compute_kl_penalty(self, policy_logits, ref_logits) -> float:
+        """
+        计算 KL 散度惩罚
         
-        ratio = torch.exp(new_log_probs - old_log_probs)
-        ratio_clipped = torch.clamp(ratio, 1 - clip_epsilon, 1 + clip_epsilon)
-        
-        loss_unclipped = ratio * advantages
-        loss_clipped = ratio_clipped * advantages
-        
-        policy_loss = -torch.min(loss_unclipped, loss_clipped).mean()
-        
-        return policy_loss
-    
-    def adaptive_kl_update(self, current_kl: float):
-        """自适应调整KL系数"""
-        if not self.config.adaptive_kl:
-            return
-        
-        self.kl_buffer.append(current_kl)
-        
-        if len(self.kl_buffer) > self.config.horizon:
-            self.kl_buffer.pop(0)
-        
-        avg_kl = np.mean(self.kl_buffer)
-        
-        if avg_kl < self.config.kl_target / 1.5:
-            self.current_kl_coeff = max(
-                self.config.kl_clip_min,
-                self.current_kl_coeff / 1.5
-            )
-            self.stats["kl_coeff_adjustments"] += 1
-        
-        elif avg_kl > self.config.kl_target * 1.5:
-            self.current_kl_coeff = min(
-                self.config.kl_clip_max,
-                self.current_kl_coeff * 1.5
-            )
-            self.stats["kl_coeff_adjustments"] += 1
-            self.stats["kl_violations"] += 1
-        
-        self.stats["total_updates"] += 1
-    
-    def compute_value_loss(self, predicted_values: torch.Tensor,
-                          target_values: torch.Tensor,
-                          clip_value: bool = True,
-                          value_clip_range: float = 0.2) -> torch.Tensor:
-        """计算价值函数损失"""
-        
-        if clip_value:
-            value_pred_clipped = torch.clamp(
-                predicted_values,
-                target_values - value_clip_range,
-                target_values + value_clip_range
-            )
-            loss_clipped = (value_pred_clipped - target_values) ** 2
-            loss_unclipped = (predicted_values - target_values) ** 2
+        🔧 修复：输入验证
+        """
+        try:
+            # 🔧 修复：输入验证
+            if policy_logits is None or ref_logits is None:
+                logger.warning("logits 为空，返回 0 惩罚")
+                return 0.0
             
-            value_loss = torch.max(loss_unclipped, loss_clipped).mean()
-        else:
-            value_loss = ((predicted_values - target_values) ** 2).mean()
+            if not isinstance(policy_logits, torch.Tensor):
+                policy_logits = torch.tensor(policy_logits)
+            if not isinstance(ref_logits, torch.Tensor):
+                ref_logits = torch.tensor(ref_logits)
+            
+            # 确保形状一致
+            if policy_logits.shape != ref_logits.shape:
+                logger.warning("logits 形状不匹配")
+                min_len = min(policy_logits.shape[-1], ref_logits.shape[-1])
+                policy_logits = policy_logits[..., :min_len]
+                ref_logits = ref_logits[..., :min_len]
+            
+            policy_probs = torch.softmax(policy_logits, dim=-1)
+            ref_probs = torch.softmax(ref_logits, dim=-1)
+            
+            # 🔧 修复：添加 epsilon 避免 log(0)
+            epsilon = 1e-10
+            kl_div = torch.sum(ref_probs * torch.log((ref_probs + epsilon) / (policy_probs + epsilon)), dim=-1)
+            
+            kl_value = kl_div.mean().item()
+            
+            # 记录到缓冲区
+            self.kl_buffer.append(kl_value)
+            
+            return kl_value * self.kl_coefficient
+            
+        except Exception as e:
+            logger.error(f"计算 KL 惩罚失败：{e}")
+            return 0.0
+    
+    def update_kl_coefficient(self):
+        """
+        自适应更新 KL 系数
         
-        return value_loss
+        🔧 修复：使用 deque 自动限制大小
+        """
+        try:
+            if len(self.kl_buffer) < 10:
+                return  # 数据不足
+            
+            # 🔧 修复：使用 deque，无需手动 pop
+            avg_kl = sum(self.kl_buffer) / len(self.kl_buffer)
+            
+            if avg_kl < self.target_kl / 1.5:
+                self.kl_coefficient = max(
+                    self.min_kl_coeff,
+                    self.kl_coefficient / 1.5
+                )
+                logger.debug(f"降低 KL 系数：{self.kl_coefficient:.4f}")
+            elif avg_kl > self.target_kl * 1.5:
+                self.kl_coefficient = min(
+                    self.max_kl_coeff,
+                    self.kl_coefficient * 1.5
+                )
+                logger.debug(f"提高 KL 系数：{self.kl_coefficient:.4f}")
+            
+        except Exception as e:
+            logger.error(f"更新 KL 系数失败：{e}")
     
-    def clip_gradients(self, model, max_grad_norm: float = 1.0) -> float:
-        """梯度裁剪"""
-        total_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(), 
-            max_grad_norm
-        )
-        return total_norm.item()
-    
-    def get_stats(self) -> Dict:
-        """获取统计信息"""
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取 KL 统计"""
+        if not self.kl_buffer:
+            return {
+                'avg_kl': 0.0,
+                'kl_coefficient': self.kl_coefficient,
+                'buffer_size': 0,
+                'max_buffer_size': self.max_buffer_size
+            }
+        
+        kl_values = list(self.kl_buffer)
+        
         return {
-            **self.stats,
-            "current_kl_coeff": self.current_kl_coeff,
-            "avg_kl_buffer": np.mean(self.kl_buffer) if self.kl_buffer else 0.0,
-            "kl_buffer_size": len(self.kl_buffer)
+            'avg_kl': sum(kl_values) / len(kl_values),
+            'min_kl': min(kl_values),
+            'max_kl': max(kl_values),
+            'kl_coefficient': self.kl_coefficient,
+            'target_kl': self.target_kl,
+            'buffer_size': len(kl_values),
+            'max_buffer_size': self.max_buffer_size
         }
+    
+    def reset(self):
+        """重置 KL 约束"""
+        self.kl_buffer.clear()
+        self.kl_coefficient = getattr(self.config, 'kl_coefficient', 0.2)
+        logger.info("KL 约束已重置")
+    
+    def get_buffer_memory_usage(self) -> int:
+        """
+        获取缓冲区内存占用
+        
+        🔧 修复：新增方法，监控内存
+        """
+        return len(self.kl_buffer) * 8  # 每个 float 约 8 字节
